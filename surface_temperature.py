@@ -3,12 +3,15 @@
 Generating the time series of the surface temperature based on the measured
 surface temperature with temperature loggers over a certain period of time.
 
-@author: Joshua Marks
+Created on Wed Sep  4 15:15:46 2024
+
+@author: marksj
 """
 
 # %% Imports
 
 # Third party imports
+import os
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -17,8 +20,6 @@ import matplotlib.pyplot as plt
 
 class SurfaceTemperature:
     """
-    Creating a surface temperature input object.
-
     Input:
         sensor number (str), file name with .txt (str), lake name (str) and the
         time period as e.g. 'Winter2023/2024' or 'Summer2024' (str)
@@ -62,6 +63,54 @@ class SurfaceTemperature:
                   "'Temperature' and reload the file.")
         return file
 
+    @staticmethod
+    def create_input(surface_temperature, start_date: str, end_date: str,
+                     time_step_size):
+        """
+        Creates an input .txt file with needed columns time and temperature to
+        create a surface temperature time series in the input_data folder.
+        The surface temperature is set to a constant value for the whole time
+        series.
+
+        Input:
+            surface temperature [°C], start date ['YYYY-MM-DD hh:mm:ss'],
+            end date ['YYYY-MM-DD hh:mm:ss'], time step size [str:
+            'every minute', 'hourly', 'daily', 'weekly' or 'monthly']
+
+        Output:
+            .txt file for creation of a surface temperature time series
+
+        Returns:
+            file name (str)
+        """
+        time_step_dictionary = {"every minute": "min",
+                                "hourly": "h",
+                                "daily": "D",
+                                "weekly": "W",
+                                "monthly": "ME"}
+        if time_step_size in time_step_dictionary:
+            freq = time_step_dictionary[time_step_size]
+            time = pd.date_range(start=start_date, end=end_date, freq=freq)
+            surftemp = pd.DataFrame({"Time": time,
+                                     "Temperature": ([surface_temperature] *
+                                                     len(time))}
+                                    )
+            file_name = (f"surftemp{surface_temperature}_" +
+                         f"timestep{time_step_size}")
+            os.makedirs("input_data/", exist_ok=True)
+            surftemp.to_csv("input_data/" + file_name + ".txt", sep=",",
+                            index=False)
+            print(f"{file_name} was created as .txt in the folder " +
+                  "'input_data'.")
+            print("To create the surface temperature time series use")
+            print(f"'{file_name}.txt' as 'file_name'.")
+            return file_name
+        else:
+            print("The time step size is not callable. Either change the " +
+                  "code or choose one of the following time step sizes:" +
+                  "'hourly', 'daily', 'weekly' or 'monthly'." +
+                  "The time series was not changed yet.")
+
     def create_time_series(self, time_step_size: str):
         """
         Creating a time series of the surface temperature with a given time
@@ -99,7 +148,7 @@ class SurfaceTemperature:
 
     def moving_average(self, time_step_size):
         """
-        Transforming the time series into a moving average.
+        Transorming the time series into an moving average.
         Depending on the time step size, the moving average will use the time
         window of 2 days for 'every minute', 'hourly', 7 days for 'daily' and
         60 days for 'weekly' and 'monthly'.

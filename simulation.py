@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """
 Run a simulation given a water column as starting object and as object to
-conduct the simulation on with the surface temperature as driver of the
-simulation but without altering the conductivity profile if given.
+conduct the simulation on and the surface temperature as driver of the
+simulation.
 
-@author: Joshua Marks
+Created on Tue Sep 10 16:16:31 2024
+
+@author: marksj
 """
 
 # %% Imports
@@ -13,11 +15,7 @@ simulation but without altering the conductivity profile if given.
 import time
 import os
 import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-from matplotlib.colors import ListedColormap
-from matplotlib.colors import SymLogNorm
+import xarray as xr
 
 # Local imports
 import water_column as wc
@@ -56,108 +54,182 @@ class Simulation:
         self.exchange_volume = exchange_volume
         self.surface_temp_ts = surface_temperature_time_series
         self.time_step_size = time_step_size
-        self.t_logs = []
-        self.mix_log = []
-        self.n2_log = []
 
     def run(self):
         """
         Given the water column as starting values and as objects to perform the
         simulation on, the surface temperature as input variable and the grid
-        size and time step size as simulation parameters this runs the
-        simulation for the given intput.
+        size, the exchange volume and time step size as simulation parameters
+        this runs the simulation for the given intput.
 
         Output:
-            .txt files with the depth, temperature, k25, sound veloctiy and in-
-            situ density data for each hour (for smaller time steps the last of
-            the corresponding hour and for larger time steps the corresponding
-            days are saved). They are named after the lake, the day and end
-            with '_sim.txt'.
+            netCDF (*.nc) file containing temperature, pressure, k25, sound
+            velocity, potential and in situ density, n2 and mixing log for the
+            whole simulation time in hourly timesteps (for smaller time steps
+            the last of the corresponding hour and for larger time steps the
+            corresponding days are saved) for every depth. The file is named
+            after the lake name in the water column input file.
             Plotting the input data and the final output data from the last
             time step in the given grid format.
-            Saving the temperature over the time period for the uppermost not
-            controlled layer, the middle layer and the lowermost layer in the
-            file 't_logs.txt'.
-            Saving a data frame with the indication of occurred mixing as
-            'mix_log.txt'.
-            Saving a data frame with the Brunt-Väisälä-Frequency [1/s^2] as
-            'n2_log.txt'.
 
         Note:
-            The folders 'output_data' has to exist.
+            The surface temperature input can be manipulated by surface
+            temperature operations (see surface_temperature.py) before creating
+            the simulation with this input.
         """
         print("Running simulation")
-        os.makedirs("output_data/" + self.water_column.lake, exist_ok=True)
-        print(f"Folder {self.water_column.lake} in output_data created.")
-        print("The output files can be found there.")
+        os.makedirs("output/", exist_ok=True)
         print("The input profiles are shown in the gridded format first.")
         start_time = time.time()
         print("Simulation started at", time.strftime("%H:%M:%S",
                                                      time.localtime()))
         # Simulation set-up
         self.water_column.create_grid(self.grid_size)
-        middle = round(0.5*len(self.water_column.depth))
         self.water_column.plot_all()
         self.surface_temp_ts.create_time_series(self.time_step_size)
         self.surface_temp_ts.plot_surface_temperature()
+        # Initializing lists for output
+        times = []
+        depth = self.water_column.depth
+        pressure_profiles = []
+        temperature_profiles_diff = []
+        temperature_profiles = []
+        conductivity_profiles = []
+        k25_profiles_diff = []
+        k25_profiles = []
+        sound_velocity_profiles = []
+        pot_density_profiles_diff = []
+        pot_density_profiles = []
+        is_density_profiles_diff = []
+        is_density_profiles = []
+        n2_profiles_diff = []
+        n2_profiles = []
+        mix_log_profiles = []
         # Simulation
         for data_point in self.surface_temp_ts.data.itertuples():
             self.water_column.set_surface_temperature(data_point.Temperature)
             self.water_column.diffuse(self.exchange_volume)
+            # Saving profiles after diffusion and before stabilization
+            temperature_profiles_diff.append(self.water_column.temperature.copy())
+            k25_profiles_diff.append(self.water_column.k25.copy())
+            pot_density_profiles_diff.append(self.water_column.pot_density.copy())
+            is_density_profiles_diff.append(self.water_column.insitu_density.copy())
+            n2_profiles_diff.append(self.water_column.n2.copy())
+            # Stabilizing water column
             self.water_column.stabilise()
-            self.water_column.calculate_n2()
-            # Saving current profiles:
-            current_data = np.column_stack((self.water_column.depth,
-                                            self.water_column.pressure,
-                                            self.water_column.temperature,
-                                            self.water_column.k25,
-                                            self.water_column.sound_velocity,
-                                            self.water_column.insitu_density))
-            header = ("Depth, Pressure,Temperature,k25,Sound Velocity," +
-                      "In-situ Density")
-            np.savetxt("output_data/" + self.water_column.lake + "/"
-                       + self.water_column.lake + "_" +
-                       data_point.Index.strftime("%Y-%m-%d_%H") + "_sim.txt",
-                       current_data, delimiter=",", header=header,
-                       comments="")
-            # Saving the current T-logs
-            t_log_entry = pd.DataFrame({"Time": data_point.Index,
-                                        "Temperature top":
-                                        [self.water_column.temperature[1]],
-                                        "Temperature middle":
-                                        [self.water_column.temperature[middle]
-                                         ],
-                                        "Temperature bottom":
-                                        [self.water_column.temperature[-1]]})
-            self.t_logs.append(t_log_entry)
-            # Saving the current mixing log
-            mix_log_entry = pd.DataFrame({"Time": data_point.Index,
-                                          "Mixing log":
-                                          [self.water_column.mix_idx]})
-            self.mix_log.append(mix_log_entry)
-            # Saving the current stability profile
-            n2_log_entry = pd.DataFrame({"Time": data_point.Index,
-                                         "N2": [self.water_column.n2]})
-            self.n2_log.append(n2_log_entry)
-        # Saving t_logs
-        self.t_logs = pd.concat(self.t_logs, ignore_index=True)
-        self.t_logs.set_index("Time", inplace=True)
-        self.t_logs.to_csv("output_data/" + self.water_column.lake + "/"
-                           + self.water_column.lake + "_t_logs.txt")
-        # Saving mix_log
-        self.mix_log = pd.concat(self.mix_log, ignore_index=True)
-        self.mix_log.set_index("Time", inplace=True)
-        self.mix_log.to_csv("output_data/" + self.water_column.lake + "/"
-                            + self.water_column.lake + "_mix_log.txt")
-        # Saving n2_log
-        self.n2_log = pd.concat(self.n2_log, ignore_index=True)
-        self.n2_log.set_index("Time", inplace=True)
-        self.n2_log.to_csv("output_data/" + self.water_column.lake + "/"
-                           + self.water_column.lake + "_n2_log.txt")
+            # Saving current profiles after stabilization
+            times.append(data_point.Index)
+            pressure_profiles.append(self.water_column.pressure.copy())
+            temperature_profiles.append(self.water_column.temperature.copy())
+            conductivity_profiles.append(self.water_column.conductivity.copy())
+            k25_profiles.append(self.water_column.k25.copy())
+            sound_velocity_profiles.append(self.water_column.sound_velocity.copy())
+            pot_density_profiles.append(self.water_column.pot_density.copy())
+            is_density_profiles.append(self.water_column.insitu_density.copy())
+            n2_profiles.append(self.water_column.n2.copy())
+            mix_log_profiles.append(self.water_column.mix_idx.copy())
+        # Saving output
+        times = np.array(times)
+        output = xr.Dataset(
+            {"pressure": xr.DataArray(
+                np.vstack(pressure_profiles),
+                dims=["time", "depth"],
+                attrs={"long_name": "pressure", "unit": "bar"}
+                ),
+             "temperature": xr.DataArray(
+                np.vstack(temperature_profiles),
+                dims=["time", "depth"],
+                attrs={"long_name": "water temperature", "unit": "degC"}
+                ),
+             "temperature_diff": xr.DataArray(
+                 np.vstack(temperature_profiles_diff),
+                 dims=["time", "depth"],
+                 attrs={"long_name": "water temperature after diffusion and before stabilization",
+                        "unit": "degC"}
+                 ),
+             "conductivity": xr.DataArray(
+                 np.vstack(conductivity_profiles),
+                 dims=["time", "depth"],
+                 attrs={"long_name": "conductivity", "unit": "mS/cm"}
+                 ),
+             "k25": xr.DataArray(
+                 np.vstack(k25_profiles),
+                 dims=["time", "depth"],
+                 attrs={"long_name": "conductivity at 25 °C", "unit": "mS/cm"}
+                 ),
+             "k25_diff": xr.DataArray(
+                 np.vstack(k25_profiles_diff),
+                 dims=["time", "depth"],
+                 attrs={"long_name": "conductivity at 25 °C after diffusion and before stabilization",
+                        "unit": "mS/cm"}
+                 ),
+             "sound_velocity": xr.DataArray(
+                 np.vstack(sound_velocity_profiles),
+                 dims=["time", "depth"],
+                 attrs={"long_name": "sound velocity", "unit": "m/s"}
+                 ),
+             "pot_density": xr.DataArray(
+                 np.vstack(pot_density_profiles),
+                 dims=["time", "depth"],
+                 attrs={"long_name": "potential density", "unit": "kg/m^3"}
+                 ),
+             "pot_density_diff": xr.DataArray(
+                 np.vstack(pot_density_profiles_diff),
+                 dims=["time", "depth"],
+                 attrs={"long_name": "potential density after diffusion and before stabilization",
+                        "unit": "kg/m^3"}
+                 ),
+             "is_density": xr.DataArray(
+                 np.vstack(is_density_profiles),
+                 dims=["time", "depth"],
+                 attrs={"long_name": "in situ density", "unit": "kg/m^3"}
+                 ),
+             "is_density_diff": xr.DataArray(
+                 np.vstack(is_density_profiles_diff),
+                 dims=["time", "depth"],
+                 attrs={"long_name": "in situ density after diffusion and before stabilization",
+                        "unit": "kg/m^3"}
+                 ),
+             "stability": xr.DataArray(
+                 np.vstack(n2_profiles),
+                 dims=["time", "depth"],
+                 attrs={"long_name": "stability frequency", "unit": "1/s^2"}
+                 ),
+             "stability_diff": xr.DataArray(
+                 np.vstack(n2_profiles),
+                 dims=["time", "depth"],
+                 attrs={"long_name": "stability frequencyafter diffusion and before stabilization",
+                        "unit": "1/s^2"}
+                 ),
+             "mix_log": xr.DataArray(
+                 np.vstack(mix_log_profiles),
+                 dims=["time", "depth"],
+                 attrs={"long_name": "mixing log of stabilization process",
+                        "unit": "1 for mixed, 0 for not mixed"}
+                 )
+             },
+            coords={
+                "time": times,
+                "depth": xr.DataArray(
+                    depth,
+                    dims=["depth"],
+                    attrs={"long_name": "depth below water surface",
+                           "unit": "m"}
+                    )
+                },
+            attrs={
+                "title": "model data output",
+                "lake_name": self.water_column.lake,
+                "input_profile": self.water_column.input_profile,
+                "input_surface_temperature": self.surface_temp_ts.file_name,
+                "is_density_type": self.water_column.is_density_type,
+                "grid_size": str(self.grid_size),
+                "exchange_volume": str(self.exchange_volume),
+                "time_step": self.time_step_size
+                }
+            )
+        output.to_netcdf(f"output/{self.water_column.lake}.nc")
         # Last output
-        self.plot_t_logs()
-        self.plot_mix_log()
-        self.plot_n2_log()
         self.water_column.plot_all()
         end_time = time.time()
         runtime = end_time - start_time
@@ -171,58 +243,3 @@ class Simulation:
         print("Cached data can be found in the folder 'output_data'.")
         print("The final profiles are plotted last, after the stability log.")
         print("")
-
-    def plot_t_logs(self):
-        """
-        Plotting the temperature logs.
-        """
-        self.t_logs.plot(title="Temperature-Logs", xlabel="Time",
-                         ylabel="Temperature [°C]", legend=True)
-        plt.show()
-
-    def plot_mix_log(self):
-        """
-        Plotting the mixing log as 2D colored image with two colors indicating
-        mixing events and no-mixing events.
-        """
-        data = np.array(self.mix_log["Mixing log"].tolist()).transpose()
-        time = np.array(self.mix_log.index)
-        cmap = ListedColormap(["lightsteelblue", "steelblue"])
-        im = plt.imshow(data, cmap=cmap, aspect="auto", interpolation="none",
-                        extent=[0, len(time), (self.water_column.depth[-1] +
-                                               self.water_column.depth[1]),
-                                self.water_column.depth[0]])
-        plt.xticks(rotation=20)
-        legend_elements = [mpatches.Patch(color=im.cmap(im.norm(0)),
-                                          label="no mixing"),
-                           mpatches.Patch(color=im.cmap(im.norm(1)),
-                                          label="mixing")]
-        plt.legend(handles=legend_elements, bbox_to_anchor=(1.01, 1), loc=2,
-                   borderaxespad=0)
-        plt.title("Mixing")
-        plt.xlabel("Time Step")
-        plt.ylabel("Depth [m]")
-        plt.show()
-
-    def plot_n2_log(self):
-        """
-        Plotting the N^2 (Brunt-Väisälä-Frequency) log as 2D colored image with
-        positive values colored as shown by the colorbar and all negative
-        values, regardless of their absolute value, are shown in white.
-        """
-        data = np.array(self.n2_log["N2"].tolist()).transpose()
-        time = np.array(self.n2_log.index)
-        cmap = "plasma"
-        im = plt.imshow(data, cmap=cmap, norm=SymLogNorm(linthresh=1e-10,
-                                                         vmin=0),
-                        aspect="auto", interpolation="none",
-                        extent=[0, len(time), (self.water_column.depth[-2] +
-                                               self.water_column.depth[1]),
-                                self.water_column.depth[0]])
-        im.cmap.set_under("white")
-        plt.colorbar(im).set_label(r"N$^2$ [1/$\text{s}^2$]")
-        plt.xticks(rotation=20)
-        plt.title("Stability")
-        plt.xlabel("Time Step")
-        plt.ylabel("Depth [m]")
-        plt.show()

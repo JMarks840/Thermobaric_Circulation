@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-Formula for the calculation of the sound velocity.
+Collection of formulas for the calculation of the sound velocity based on
+different approaches.
 The pressure is always taken in bar, the temperature in °C, the conductivity in
 mS/cm and the salinity in PSU.
 
-@author: Joshua Marks
+Created on Tue Aug 27 11:24:05 2024
+
+@author: marksj
 """
 
 # %% Imports
@@ -50,3 +53,12 @@ def Belogolskii(p, T):
     W2 = M2*(p_MPa - 0.101325)**2
     W3 = M3*(p_MPa - 0.101325)**3
     return W0 + W1 + W2 + W3
+
+
+def Selyakov():
+    pass
+
+
+def totalSoundVelocity():
+    # Belogol'skii + Selyakov
+    pass

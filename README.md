@@ -9,4 +9,4 @@ For more background and motivation of this code have a look at the corresponding
 freshwater lake. *EGUsphere* [preprint], https://doi.org/10.5194/egusphere‑2025‑1195
 (under review for *Hydrology and Earth System Sciences*).**
 
-When using this model code please consider citing the paper above.
+When using this model code please citing the paper above.

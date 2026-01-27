@@ -4,12 +4,15 @@ Collection of formulas for basic calulations.
 The pressure is always taken in bar, the temperature in °C, the conductivity in
 mS/cm and the salinity in PSU.
 
-@author: Joshua Marks
+Created on Wed Aug 21 10:47:38 2024
+
+@author: marksj
 """
 
 # %% Imports
 
 # Third party imports
+import gsw
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -38,13 +41,6 @@ def T_md_CM(p, S):
     """
     Temperature of maximum density after Chen and Millero (1986)
 
-    Note:
-        This is only a simple approach to create a comparible temperature of
-        maximum density. For the exact value of the temperature of maximum
-        density it should be based on the used in-situ density of this model.
-        Hence, the correct calculation of the temperature of maximum density
-        should be based on del(rho_is)/del(T)=0.
-
     Input:
         pressure [bar], salinity [PSU]
 
@@ -53,6 +49,44 @@ def T_md_CM(p, S):
     """
     Tmd = 3.9839 - 1.9911e-2*p - 5.822e-6*p**2 - (0.2219 + 1.106e-4*p)*S
     return Tmd
+
+
+def T_md_teos10(p, T_low, T_up, T_range_num):
+    """
+    Temperature of maximum density after TEOS-10
+
+    This function uses the GSW-Python package available at
+    https://github.com/TEOS-10/GSW-Python
+    Reference:
+        McDougall, T.J. and P.M. Barker, 2011: Getting started with TEOS-10 and
+        the Gibbs Seawater (GSW) Oceanographic Toolbox, 28pp., SCOR/IAPSO
+        WG127, ISBN 978-0-646-55621-5
+
+    The temperature range has to include all possible values for the
+    temperature of maximum density for the whole depth range (compare with
+    T_md_CM if needed).
+
+    Note:
+        This is only a numerical approxcimation of the correct calculation
+        del(rho_is)/del(T)=0.
+        The resolution depends on the input values for the temperature range.
+        The conductivity is assumed to be zero for simplicity.
+
+    Input:
+        pressure [bar], lowest possible temperature of maximum density [°C],
+        highest possible temperature of maximum density [°C], number of steps
+        between T_low and T_up
+
+    Returns:
+        array of temperature of maximum density for the whole profile [°C]
+    """
+    T_md_teos10 = np.array([])
+    T_range = np.linspace(T_low, T_up, T_range_num)
+    for i, p_i in enumerate(p):
+        rho_teos10 = dens.rho_teos10(p_i, T_range)
+        T_md_teos10_i = T_range[np.argmax(rho_teos10)]
+        T_md_teos10 = np.append(T_md_teos10, T_md_teos10_i)
+    return T_md_teos10
 
 
 def T_md(p, lambda0, lambda1, T_low, T_up, T_range_num):
@@ -64,9 +98,10 @@ def T_md(p, lambda0, lambda1, T_low, T_up, T_range_num):
     T_md_CM if needed).
 
     Note:
-        This is only a numerical approximation. The resolution depends on the
-        input values for the temperature range. The conductivity is assumed to
-        be zero for simplicity.
+        This is only a numerical approxcimation of the correct calculation
+        del(rho_is)/del(T)=0.
+        The resolution depends on the input values for the temperature range.
+        The conductivity is assumed to be zero for simplicity.
 
     Input:
         pressure [bar], lambda_0 [kg*cm/(m^3*mS)], lambda_1 [kg*cm/(m^3*mS*K)],
@@ -116,6 +151,21 @@ def k25(T, C, alpha):
     return C/(alpha*(T - 25) + 1)
 
 
+def C_from_k25(T, k25, alpha):
+    """
+    Calculation of the conductivity from the conductivity at 25 °C (reverse of
+    k25(T, C, alpha))
+
+    Input:
+        temperature [°C], conductivity at 25 °C [mS/cm], alpha as part of the
+        lake parameters (LakeParameters) [1/K]
+
+    Returns:
+        conductivity [mS/cm]
+    """
+    return k25*(alpha*(T - 25) + 1)
+
+
 def UNESCO(p, T, C):
     """
     UNESCO formula to transfrom the measured conductivity into practival
@@ -146,6 +196,71 @@ def UNESCO(p, T, C):
     return S_oc1 + ((T - 15)/(1 + k*(T - 15)))*S_oc2
 
 
+def N2_teos10(depth, p, T):
+    """
+    Brunt-Väisälä-Frequency based on the in-situ density after TEOS-10
+
+    Input:
+        pressure [bar], temperature [°C]
+
+    Returns:
+        Brunt-Väisälä-Frequency [1/s^2] as array with the last element value
+        -9999 to ensure the same size as the input arrays
+
+    Note:
+        The input for depth, pressure, and temperature has to be a numpy array
+        with at least 2 elements each and the same length.
+        The last value will be -9999 to ensure the same length as the input
+        since the output will be always one values shorter due to the
+        calculations.
+    """
+    N2_column = []
+    index = np.linspace(1, (len(depth) - 1), (len(depth) - 1)
+                        ).astype("int64")
+    for i in index:
+        rho_1 = dens.rho_teos10(p[i], T[i-1])
+        rho_2 = dens.rho_teos10(p[i], T[i])
+        z_1 = depth[i-1]
+        z_2 = depth[i]
+        N2 = -(9.81/rho_1)*((rho_2 - rho_1)/(z_2 - z_1))
+        N2_column.append(N2)
+    N2_column = np.array(N2_column)
+    N2_column = np.append(N2_column, -9999)
+    return N2_column
+
+def N2_pot(depth, T, k25, lambda0, lambda1):
+    """
+    Brunt-Väisälä-Frequency using the potential density
+
+    Input:
+        depth [m], temperature [°C], conductivity at 25 °C [mS/cm],
+        lambda_0 [kg*cm/(m^3*mS)], lambda_1 [kg*cm/(m^3*mS*K)]
+
+    Returns:
+        Brunt-Väisälä-Frequency [1/s^2] as array with the last element value
+        -9999 to ensure the same size as the input arrays
+
+    Note:
+        The input for depth, temperature and conductivity has to be a numpy
+        array with at least 2 elements each and the same length.
+        The last value will be -9999 to ensure the same length as the input
+        since the output will be always one values shorter due to the
+        calculations.
+    """
+    N2_column = []
+    index = np.linspace(1, (len(depth) - 1), (len(depth) - 1)
+                        ).astype("int64")
+    for i in index:
+        rho_1 = dens.Moreira(T[i-1], k25[i-1], lambda0, lambda1)
+        rho_2 = dens.Moreira(T[i], k25[i], lambda0, lambda1)
+        z_1 = depth[i-1]
+        z_2 = depth[i]
+        N2 = -(9.81/rho_1)*((rho_2 - rho_1)/(z_2 - z_1))
+        N2_column.append(N2)
+    N2_column = np.array(N2_column)
+    N2_column = np.append(N2_column, -9999)
+    return N2_column
+
 def N2_is(depth, p, T, k25, c, lambda0, lambda1):
     """
     Brunt-Väisälä-Frequency using the in-situ density
@@ -158,12 +273,15 @@ def N2_is(depth, p, T, k25, c, lambda0, lambda1):
         lambda_1 [kg*cm/(m^3*mS*K)]
 
     Returns:
-        Brunt-Väisälä-Frequency [1/s^2] as array with one element less than the
-        input arrays
+        Brunt-Väisälä-Frequency [1/s^2] as array with the last element value
+        -9999 to ensure the same size as the input arrays
 
     Note:
         The input for depth, pressure, temperature and conductivity has to be
         a numpy array with at least 2 elements each and the same length.
+        The last value will be -9999 to ensure the same length as the input
+        since the output will be always one values shorter due to the
+        calculations.
     """
     N2_column = []
     index = np.linspace(1, (len(depth) - 1), (len(depth) - 1)
@@ -177,12 +295,13 @@ def N2_is(depth, p, T, k25, c, lambda0, lambda1):
         N2 = -(9.81/rho_1)*((rho_2 - rho_1)/(z_2 - z_1))
         N2_column.append(N2)
     N2_column = np.array(N2_column)
+    N2_column = np.append(N2_column, -9999)
     return N2_column
 
 
 def plot_T_md(p):
     """
-    Plotting temperature of maximum density, see T_md()
+    Plotting the approximated temperature of maximum density, see T_md_appr()
     """
     Tmd = T_md_appr(p)
     d = depth(p)
