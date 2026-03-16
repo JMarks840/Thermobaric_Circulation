@@ -196,7 +196,7 @@ class Simulation:
                  attrs={"long_name": "stability frequency", "unit": "1/s^2"}
                  ),
              "stability_diff": xr.DataArray(
-                 np.vstack(n2_profiles),
+                 np.vstack(n2_profiles_diff),
                  dims=["time", "depth"],
                  attrs={"long_name": "stability frequencyafter diffusion and before stabilization",
                         "unit": "1/s^2"}
